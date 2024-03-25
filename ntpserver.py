@@ -6,6 +6,7 @@ import queue
 import threading
 import select
 import argparse
+import subprocess
 
 MALICIOUS_OFFSET = -1000000
 
@@ -92,7 +93,7 @@ class MonitorList:
                 self.monitor_ips = contents.split() # Split on spaces by default
         except Exception as e:
             self.monitor_ips = []
-            print(e)
+            print(f"[ERROR] | {datetime.datetime.now().isoformat()} | {e}")
         
     def is_monitor_ip(self, ip_address):
         """Checks whether an IP address is one of the IP addresses 
@@ -297,11 +298,11 @@ class RecvThread(threading.Thread):
         global taskQueue,stopFlag,isMalicious,monitorList
         while True:
             if stopFlag == True:
-                print("RecvThread Ended")
+                print(f"[LOG] | {datetime.datetime.now().isoformat()} | RecvThread Ended")
                 break
             rlist,wlist,elist = select.select([self.socket],[],[],1)
             if len(rlist) != 0:
-                print("Received %d packets" % len(rlist))
+                print(f"[LOG] | {datetime.datetime.now().isoformat()} | Received {len(rlist)} packets")
                 for tempSocket in rlist:
                     try:
                         data,addr = tempSocket.recvfrom(1024)
@@ -315,9 +316,9 @@ class RecvThread(threading.Thread):
                         recvTimestamp = recvTimestamp = system_to_ntp_time(t)
                         taskQueue.put((data,addr,recvTimestamp))
                     except socket.error as msg:
-                        print(msg)
+                        print(f"[ERROR] | {datetime.datetime.now().isoformat()} | {msg}")
                     except Exception as e:
-                        print(e)
+                        print(f"[ERROR] | {datetime.datetime.now().isoformat()} | {e}")
 
 class WorkThread(threading.Thread):
     def __init__(self,socket):
@@ -327,7 +328,7 @@ class WorkThread(threading.Thread):
         global taskQueue,stopFlag,isMalicious,monitorList
         while True:
             if stopFlag == True:
-                print("WorkThread Ended")
+                print(f"[LOG] | {datetime.datetime.now().isoformat()} | WorkThread Ended")
                 break
             try:
                 data,addr,recvTimestamp = taskQueue.get(timeout=1)
@@ -360,9 +361,9 @@ class WorkThread(threading.Thread):
             except queue.Empty:
                 continue
             except NTPException as e:
-                print(e)
+                print(f"[ERROR] | {datetime.datetime.now().isoformat()} | {e}")
             except Exception as e:
-                print(e)
+                print(f"[ERROR] | {datetime.datetime.now().isoformat()} | {e}")
                 
 parser = argparse.ArgumentParser()
 parser.add_argument('monitorList', type=str, help="path to text file of space-separated ip addresses")
@@ -382,15 +383,21 @@ recvThread.start()
 workThread = WorkThread(socket)
 workThread.start()
 
-while True:
-    try:
-        time.sleep(0.5)
-    except KeyboardInterrupt:
-        print("Exiting...")
-        stopFlag = True
-        recvThread.join()
-        workThread.join()
-        socket.close()
-        print("Exited")
-        break
-        
+try:
+    while True:
+        try:
+            time.sleep(0.5)
+        except KeyboardInterrupt:
+            print(f"[LOG] | {datetime.datetime.now().isoformat()} | Received keyboard interrupt: Exiting...")
+            break
+finally:
+    print(f"[LOG] | {datetime.datetime.now().isoformat()} | Exiting...")
+    stopFlag = True
+    recvThread.join()
+    workThread.join()
+    socket.close()
+
+    subprocess.call(["systemctl", "restart", "ntp"])
+    subprocess.call(["service", "ntp", "start"])
+
+    print(f"[LOG] | {datetime.datetime.now().isoformat()} | Exiting...")
