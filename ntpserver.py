@@ -361,7 +361,7 @@ parser.add_argument('--isMalicious', type=bool, default=True, required=False, he
 args = parser.parse_args()
         
 isMalicious = args.isMalicious
-monitorList = MonitorList('monitor_list.txt')
+monitorList = MonitorList(args.monitorList)
 listenIp = "0.0.0.0"
 listenPort = args.listenPort
 socket = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
