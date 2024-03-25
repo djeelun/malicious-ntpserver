@@ -397,6 +397,7 @@ finally:
     workThread.join()
     socket.close()
 
+    print(f"[LOG] | {datetime.datetime.now().isoformat()} | (Re)starting the benign NTP server")
     subprocess.call(["systemctl", "restart", "ntp"])
     subprocess.call(["service", "ntp", "start"])
 
