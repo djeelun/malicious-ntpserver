@@ -241,6 +241,8 @@ class NTPPacket:
                 _to_frac(self.tx_timestamp))
         except struct.error:
             raise NTPException("Invalid NTP packet fields.")
+        except Exception as e:
+            raise e
         return packed
 
     def from_data(self, data):
@@ -257,7 +259,9 @@ class NTPPacket:
             unpacked = struct.unpack(NTPPacket._PACKET_FORMAT,
                     data[0:struct.calcsize(NTPPacket._PACKET_FORMAT)])
         except struct.error:
-            raise NTPException("Invalid NTP packet.")
+            raise NTPException("Invalid NTP packet. raw data: " + data.hex())
+        except Exception as e:
+            raise e
 
         self.leap = unpacked[0] >> 6 & 0x3
         self.version = unpacked[0] >> 3 & 0x7
@@ -312,6 +316,8 @@ class RecvThread(threading.Thread):
                         taskQueue.put((data,addr,recvTimestamp))
                     except socket.error as msg:
                         print(msg)
+                    except Exception as e:
+                        print(e)
 
 class WorkThread(threading.Thread):
     def __init__(self,socket):
@@ -353,6 +359,10 @@ class WorkThread(threading.Thread):
                 print(f"[LOG] | {datetime.datetime.now().isoformat()} | {addr[0]}:{addr[1]} | Sent NTP reply (malicious: {doModifyPacket})")
             except queue.Empty:
                 continue
+            except NTPException as e:
+                print(e)
+            except Exception as e:
+                print(e)
                 
 parser = argparse.ArgumentParser()
 parser.add_argument('monitorList', type=str, help="path to text file of space-separated ip addresses")
