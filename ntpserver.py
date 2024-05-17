@@ -35,7 +35,7 @@ def system_to_ntp_time(timestamp):
     Returns:
     corresponding NTP time
     """
-    return timestamp + NTP.NTP_DELTA
+    return (timestamp + NTP.NTP_DELTA) % (2**32)
 
 def _to_int(timestamp):
     """Return the integral part of a timestamp.
